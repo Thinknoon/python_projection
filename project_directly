@@ -1,0 +1,41 @@
+import  numpy as np
+import pandas as pd
+import pickle
+from SCCAF import *
+from NaiveDE import *
+import scanpy as sc
+import harmonypy as hm
+from sklearn.preprocessing import scale
+import os
+
+
+def get_orthologous_gene():
+    pass
+
+
+def project_directly(AnnData1_args1, AnnData1_args2,left_label_args,right_label_args):
+    # args1和AnnData1_args2就是两个要project的AnnaData对象
+    X_train, X_test, y_train, y_test = train_test_split_per_type(AnnData1_args1.X, AnnData1_args1.obs['subclass_label'], n=1000,frac=0.8)
+    clf = LogisticRegression(random_state=1, penalty='l1', C=0.5, solver='saga')
+    clf.fit(X_train, y_train)
+    AnnData1_args1.obs['subclass_label_predict'] = clf.predict(AnnData1_args1.X)
+    print("现在开始plot要project的umap")
+    sc.pl.umap(AnnData1_args1, color=['subclass_label', 'cluster_label'])
+    print("现在开始进行被project对象的自我project")
+    AnnData1_args1.obs['subclass_label_predict'] = clf.predict(AnnData1_args1.X)
+    print("现在开始plot自我project的结果")
+    sc.pl.umap(AnnData1_args1, color=['subclass_label', 'subclass_label_predict'])
+    print("计算自我project的错误率并且plot")
+    AnnData1_args1.obs['class_misLabel'] = (AnnData1_args1.obs['subclass_label'] == AnnData1_args1.obs['subclass_label_predict'])
+    AnnData1_args1.obs['class_misLabel'] = AnnData1_args1.obs['class_misLabel'].astype(str)
+    AnnData1_args1.uns['class_misLabel_colors'] = ['#0000FF', '#d3d3d3']
+    sc.pl.umap(AnnData1_args1, color=['subclass_label', 'subclass_label_predict', 'class_misLabel'])
+    print("现在开始计算project并且plot")
+    AnnData1_args2.obs['subclass_label_predict'] = clf.predict(AnnData1_args2.X)
+    sc.pl.umap(AnnData1_args2, color=['subclass_label', 'subclass_label_predict'])
+    right_label = np.array(AnnData1_args2.obs['subclass_label_predict'])
+    left_label = np.array(AnnData1_args2.obs['subclass_label'])
+    left_label_order = left_label_args
+    right_label_order = right_label_args
+    sankey(left_label, right_label, leftLabels=left_label_order, rightLabels=right_label_order)
+
