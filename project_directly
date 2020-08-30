@@ -14,7 +14,7 @@ def get_orthologous_gene():
 
 
 def project_directly(AnnData1_args1, AnnData1_args2,left_label_args,right_label_args):
-    # args1和AnnData1_args2就是两个要project的AnnaData对象
+    # AnnData1_args1和AnnData1_args2就是两个要project的AnnaData对象
     X_train, X_test, y_train, y_test = train_test_split_per_type(AnnData1_args1.X, AnnData1_args1.obs['subclass_label'], n=1000,frac=0.8)
     clf = LogisticRegression(random_state=1, penalty='l1', C=0.5, solver='saga')
     clf.fit(X_train, y_train)
