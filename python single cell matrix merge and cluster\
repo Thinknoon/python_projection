@@ -1,0 +1,122 @@
+import numpy as np
+import pandas as pd
+import scanpy as sc
+from glob import iglob
+from scipy.sparse import *
+import os
+# DATA preproccess
+os.chdir("E://xunlei/PMID--29230054/single_cell/data/")
+ads = []
+for f in iglob("*.gz"):   
+    print(f)
+    tmp = pd.read_csv(f, sep='\t',header=0,index_col=0)
+    del(tmp['Sum_counts'])
+    del(tmp['Sum_ambig'])
+    del(tmp['Ambigs'])
+    data_id = f.split('_')[0]
+    data_batch = f.split('_')[1]
+    data_tment = f.split('_')[3]
+    tmp_matrix = tmp.values
+    x = csr_matrix(tmp_matrix)
+    ad = sc.AnnData(x.T)
+    ad.var_names = tmp.index
+    ad.obs_names = tmp.columns
+    ad.obs['id'] = data_id
+    ad.obs['d_batch'] = data_batch
+    ad.obs['treatment'] = data_tment
+    print(data_batch)
+    print(ad.obs["d_batch"])
+    ads.append(ad)
+ad = ads[0].concatenate(tuple(ads[1:]))
+ad.write("e://xunlei/PMID--29230054/single_cell/data/merged_raw.h5")
+
+
+# data QC:
+ad = sc.read("e://xunlei/PMID--29230054/single_cell/data/merged_raw.h5")
+sc.pl.highest_expr_genes(ad, n_top=50, )
+results_file = 'e://xunlei/PMID--29230054/single_cell/data/29230054tsned.h5'
+sc.pp.filter_cells(ad, min_genes=200)
+sc.pp.filter_genes(ad, min_cells=3)
+mito_genes = ad.var_names.str.startswith('mt')
+# mito_genes = ['mt-Nd1', 'mt-Nd2', 'mt-Cox1', 'mt-Cox2', 'mt-Atp8', 'mt-Atp6','mt-Cox3', 'mt-Nd3', 'mt-Nd4l', 'mt-Nd4', 'mt-Nd5', 'mt-Nd6', 'mt-Cytb']
+ad.obs['percent_mito'] = np.sum(ad[:, mito_genes].X, axis=1).A1 / np.sum(ad.X, axis=1).A1
+# add the total counts per cell as observations-annotation to ad
+ad.obs['n_counts'] = ad.X.sum(axis=1).A1
+sc.pl.violin(ad, 'percent_mito', groupby='id', rotation=90, cut=0)
+ad = ad[ad.obs.n_genes < 3500, :]
+ad = ad[ad.obs.percent_mito < 0.2, :] #threshold can be changed
+sc.pl.violin(ad, ['n_genes', 'n_counts', 'percent_mito'],
+             jitter=0.1, multi_panel=True, cut=0)
+sc.pl.scatter(ad, x='n_counts', y='n_genes', color='id')
+ad.write("data/python/PMID--29230054_qc.h5")
+
+#proccessing
+sc.pp.normalize_per_cell(ad, counts_per_cell_after=1e4)
+sc.pp.log1p(ad)
+ad.raw = ad
+sc.pp.highly_variable_genes(ad, min_mean=0.02, max_mean=10, min_disp=0.1)
+sc.pl.highly_variable_genes(ad)
+sc.pp.scale(ad,max_value=10)
+sc.tl.pca(ad,use_highly_variable = True)
+sc.tl.tsne(ad)
+sc.pp.neighbors(ad)
+sc.pl.tsne(ad, color=['id','d_batch','percent_mito'])#plot as many parameter as possible
+X = ad.X.T.todense()
+ad.layers['limma'] = np.array(X.T)
+ad.obsm['X_pca'] = sc.tl.pca(ad.layers['limma'])
+sc.pp.neighbors(ad)
+sc.tl.tsne(ad)
+sc.tl.louvain(ad, resolution=2)#choose leiden also 
+ad.write("data/python/PMID--29230054_limmaed.h5")
+
+#doublet_score
+for i in range(0,28):
+    tem = ad[ad.obs['batch']==str(i),:]
+    print(str(i))
+    couts_matrix = tem.X.todense()
+    scrub = scr.Scrublet(couts_matrix)
+    doublet_scores, predicted_doublets = scrub.scrub_doublets()
+    ad.obs.loc[ad.obs['batch']==str(i),'doublets_scores'] = doublet_scores
+    ad.obs.loc[ad.obs['batch']==str(i),'predicted_doublets'] = predicted_doublets
+
+#sub_class
+neu_clu = ['12','14','16','6','8','22','7','10','25','31','24','19']#choosing neuro
+ad_neu = ad[ad.obs['leiden'].isin(neu_clu)]
+sc.pp.scale(ad_neu, max_value=10)
+sc.tl.pca(ad_neu, svd_solver='arpack')
+sc.pp.neighbors(ad_neu, n_neighbors=10, n_pcs=40)
+sc.tl.tsne(ad_neu)
+sc.tl.leiden(ad_neu)
+sc.pl.tsne(ad_neu,color='leiden');sc.pl.tsne(ad_neu,color='leiden',legend_loc ='on data')
+inhibital_neuclu = ['19','23','15']#choosing inhibital neuro
+ad_neu_inhneu = ad_neu[ad_neu.obs['leiden'].isin(inhibital_neuclu)]
+sc.pl.tsne(ad_neu_inhneu,color=['Slc17a7','Gad1'])
+sc.pp.scale(ad_neu_inhneu, max_value=10)
+sc.tl.pca(ad_neu_inhneu.layers['limma'], svd_solver='arpack')
+sc.pp.neighbors(ad_neu_inhneu, n_neighbors=10, n_pcs=40)
+sc.tl.tsne(ad_neu_inhneu)
+sc.tl.leiden(ad_neu_inhneu)
+sc.pl.tsne(ad_neu_inhneu,color='leiden');sc.pl.tsne(ad_neu_inhneu,color='leiden',legend_loc ='on data') 
+sc.pl.tsne(ad_neu_inhneu,color=['doublets_scores', 'predicted_doublets'])
+sc.pl.tsne(ad_neu_inhneu,color=['Npy','Pvalb','Sst','Vip','Cck'])
+
+Npy_positive = ['3','9','12']
+Pvalb_positive = ['1','13','7','8']
+Sst_positive = ['16','0','4','11','6','14']
+Vip_positive = ['5','2']
+Cck_positive = ['10']
+Others = ['12','15']#inhibital neuro subclustering
+
+ad_neu_inhneu.obs.loc[ad_neu_inhneu.obs['leiden'].isin(Npy_positive),'cell_subtype'] = 'Npy_positive'
+ad_neu_inhneu.obs.loc[ad_neu_inhneu.obs['leiden'].isin(Pvalb_positive),'cell_subtype'] ='Pvalb_positive'
+ad_neu_inhneu.obs.loc[ad_neu_inhneu.obs['leiden'].isin(Sst_positive),'cell_subtype'] ='Sst_positive'
+ad_neu_inhneu.obs.loc[ad_neu_inhneu.obs['leiden'].isin(Vip_positive),'cell_subtype'] ='Vip_positive'
+ad_neu_inhneu.obs.loc[ad_neu_inhneu.obs['leiden'].isin(Cck_positive),'cell_subtype'] ='Cck_positive'
+ad_neu_inhneu.obs.loc[ad_neu_inhneu.obs['leiden'].isin(Others),'cell_subtype'] ='Others'
+sc.pl.tsne(ad_neu_inhneu,color='cell_subtype',legend_loc ='on data') 
+
+key = ad_neu_inhneu
+y_prob, y_pred, y_test, clf, cvsm, acc = SCCAF_assessment(key.layers['limma'], key.obs['cell_subtype'], n=1000)
+aucs = plot_roc(y_prob, y_test, clf, cvsm=cvsm, acc=acc)
+plt.show()
+
